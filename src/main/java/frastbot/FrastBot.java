@@ -1,5 +1,10 @@
 package frastbot;
 
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Future;
@@ -23,6 +28,8 @@ public class FrastBot
 	private DiscordAPI api;
 	private boolean mute;
 	private int chatty;
+	private ArrayList<Channel> channels;
+	private long lastSave;
 	
     public FrastBot(String token)
     {
@@ -30,7 +37,10 @@ public class FrastBot
     	markov = new MarkovMachine();
         api = Javacord.getApi(token, true);
         mute = false;
-        chatty = 100;
+        chatty = 5;
+        channels = new ArrayList<Channel>();
+        
+        lastSave = System.currentTimeMillis();
         
         // connect
         api.connect(new FutureCallback<DiscordAPI>() {
@@ -42,10 +52,11 @@ public class FrastBot
                 {
 					public void onMessageCreate(DiscordAPI api, Message message)
                     {
+						String serverID = message.getChannelReceiver().getServer().getId();
 						String[] tokens = message.getContent().split(" ");
 
 						// Respond to frast commands
-						if (tokens[0].equals("!frast"))
+						if (tokens[0].equals("!frast") && !serverID.equals("125648631100473344"))
 						{
 							// insufficient tokens
 							if (tokens.length == 1)
@@ -53,11 +64,10 @@ public class FrastBot
 								// help
 							}
 							
-							// transform
-							else if (tokens[1].equals("arise"))
+							// learn
+							else if (tokens[1].equals("learn"))
 							{
-								if (markov.getTarget() == null)
-									transform("Kang Frast", message);
+								transform("Kang Frast", message);
 							}
 							
 							// chatty
@@ -70,7 +80,7 @@ public class FrastBot
 								{
 									chatty = Integer.parseInt(tokens[2]);
 									chatty = Math.max(0, chatty);
-									chatty = Math.min(100, chatty);
+									chatty = Math.min(1000, chatty);
 								}
 								catch (Exception e) {}
 							}
@@ -94,19 +104,49 @@ public class FrastBot
 								mute = false;
 								api.setIdle(false);
 							}
+							
+							// save
+							else if (tokens[1].equals("save"))
+							{
+								saveData();
+							}
+							
+							// load
+							else if (tokens[1].equals("load"))
+							{
+								ObjectInputStream objectinputstream = null;
+								FileInputStream streamIn = null;
+								try {
+								    streamIn = new FileInputStream("timbrain");
+								    objectinputstream = new ObjectInputStream(streamIn);
+								    markov = (MarkovMachine) objectinputstream.readObject();
+								    completeTransformation(markov.username, message.getChannelReceiver());
+								    System.out.println("Loaded timmy's brain!");
+								} catch (Exception e) {
+								    e.printStackTrace();
+								} finally {
+								    if(objectinputstream != null)
+								    	try
+								    	{
+								    		objectinputstream .close();
+								    	} catch (Exception e) { e.printStackTrace(); }
+								}
+							}
 						}
 						
 						// Respond to regular messages, if transformed
-						else if (markov != null && markov.getTarget() != null && !mute)
+						else if (markov != null && markov.username != null && !mute)
 				    	{
-							String[] classifyTokens = message.getContent().split(" ");
-				    		double rand = Math.random();
-				    		
-				    		Classification<String, String> cl = markov.bayes.classify(Arrays.asList(classifyTokens));
-				    		double p = cl.getProbability();
-				    		
-				    		if (message.getAuthor() != api.getYourself())
-				    			p *= chatty / 100.0;
+							if (message.getAuthor().getName().equals(markov.username))
+							{
+								markov.learnMessage(message);
+							}
+							
+							if (serverID.equals("125648631100473344"))
+								return;
+							
+							double rand = Math.random();
+				    		double p = chatty / 1000.0;
 				    		
 				    		
 				    		// Guaranteed reply if message mentions frast
@@ -124,9 +164,22 @@ public class FrastBot
 				    			message.reply(reply);
 				    		}
 				    	}
-                    	
+						
+						else
+						{
+							// Save if it's been more than a day since the last save
+							long time = System.currentTimeMillis(); 
+			                System.out.println(time - lastSave);
+			                if (time - lastSave >= 86400000 && markov != null)
+			                	saveData();
+						}
+
                     }
+					
+					 
                 });
+                
+               
             }
 
             public void onFailure(Throwable t) {
@@ -137,10 +190,15 @@ public class FrastBot
 
     public void transform(String username, Message message)
     {    		
-		Channel c = message.getChannelReceiver();
-		markov.target = null;
-		
-		Future<MessageHistory> future = c.getMessageHistory(150000);
+    	Channel c = message.getChannelReceiver();
+    	
+    	if (channels.contains(c))
+    	{
+    		message.reply("*frast already knows this channel*");
+    		return;
+    	}
+    	
+		Future<MessageHistory> future = c.getMessageHistory(200000);
 		MessageHistory mh = null;
 		
 		try
@@ -157,24 +215,46 @@ public class FrastBot
 		// Initialize markov machine and train classifier
 		markov.learn(allMessages, username);
 		
-		if (markov.getTarget() == null)
+		if (markov.username == null)
 			System.err.println("transformation failed!");
 		else
 		{
-			// Create nickname
-			StringBuilder nick = new StringBuilder();
-			for (int i = 0; i < markov.getTarget().getName().length(); i++)
-			{
-				if (Math.random() < 0.5)
-					nick.append(markov.getTarget().getName().substring(i, i+1).toUpperCase());
-				else
-					nick.append(markov.getTarget().getName().substring(i, i+1).toLowerCase());
-			}
-			
-			c.getServer().updateNickname(api.getYourself(), "\"" + markov.getTarget().getName() + "\"");
+			completeTransformation(username, c);
+			channels.add(c);
 		}
 	 
 		
+    }
+    
+    public void completeTransformation(String username, Channel c)
+    {
+    	// Create nickname
+		StringBuilder nick = new StringBuilder();
+		c.getServer().updateNickname(api.getYourself(), "\"" + username + "\"");
+    }
+    
+    public void saveData()
+    {
+    	FileOutputStream fout = null;
+		ObjectOutputStream oos = null;
+		try
+		{
+			fout = new FileOutputStream("timbrain");
+			oos = new ObjectOutputStream(fout);
+			oos.writeObject(markov);
+			
+			System.out.println("Saved timmy's brain!");
+		} catch (Exception e) { e.printStackTrace(); }
+		finally
+		{
+			if(oos != null)
+				try
+				{
+					oos.close();
+				} catch (Exception e) { e.printStackTrace(); }
+		}
+		
+		lastSave = System.currentTimeMillis();
     }
     
     public String getHelpMessage()

@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Hashtable;
@@ -16,54 +17,43 @@ import de.btobastian.javacord.entities.message.MessageHistory;
 import de.daslaboratorium.machinelearning.classifier.Classifier;
 import de.daslaboratorium.machinelearning.classifier.bayes.BayesClassifier;
 
-public class MarkovMachine
+public class MarkovMachine implements Serializable
 {
 	//1								2							3
 	CountingHashtable<String, CountingHashtable<String, CountingHashtable<String, Integer>>> map;
-	Classifier<String, String> bayes;
-	User target;
+	String username;
 	
 	public MarkovMachine()
 	{
 		map = new CountingHashtable<String, CountingHashtable<String, CountingHashtable<String, Integer>>>(1000);
-		bayes = new BayesClassifier<String, String>();
-		target = null;	
 	}
 	
 	public void learn(List<Message> msgs, String username)
 	{
+		this.username = username;
 		for (int i = 0; i < msgs.size(); i++)
 		{
 			Message m = msgs.get(i);
 			
 			// Populate word map if the target user posted it
-			if (msgs.get(i).getAuthor().getName().equals(username))
+			if (m.getAuthor().getName().equals(username))
 			{
-				if (target == null)
-					target = msgs.get(i).getAuthor();
+				if (username == null)
+					this.username = username;
 				
-				// Tokenize the current message
-				String content = "^ " + m.getContent() + " ^";
-				String[] tokens = content.split(" ");
-				
-				tokens = sanitizeContent(tokens);
-				addTokens(tokens);
+				learnMessage(m);
 			}
-
-			
-			// Train on the current message
-			String[] tokens = m.getContent().split(" ");
-			if (i < msgs.size() - 1)
-			{
-				String category;
-				if (msgs.get(i+1).getAuthor().getName().equalsIgnoreCase(username))
-					category = "reply";
-				else
-					category = "ignore";
-				
-				bayes.learn(category, Arrays.asList(tokens));
-			}	
 		}
+	}
+	
+	public void learnMessage(Message m)
+	{
+		// Tokenize the current message
+		String content = "^ " + m.getContent() + " ^";
+		String[] tokens = content.split(" ");
+		
+		tokens = sanitizeContent(tokens);
+		addTokens(tokens);
 	}
 	
 	public String[] sanitizeContent(String[] tokens)
@@ -144,11 +134,6 @@ public class MarkovMachine
 		} while (!next.equals("^"));
 
 		return comment.toString();
-	}
-	
-	public User getTarget()
-	{
-		return target;
 	}
 	
 //	public void printMap()
